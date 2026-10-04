@@ -1,141 +1,105 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Building2, CheckCircle2, Clock, UploadCloud, Bell, Search, ShieldCheck, Activity, LogOut, Cpu, FileText } from 'lucide-react';
-import { getIndustryChecklist } from './approvalEngine';
+import React, { useState, useEffect } from 'react';
+import { Shield, CheckCircle, Clock, Search, Bell, FileText, Check, LogOut, XCircle, HelpCircle, X, ShieldCheck, Eye } from 'lucide-react';
 import { api } from './api';
-import TrackingModule from './TrackingModule';
 
-export default function Dashboard() {
-  const [profile, setProfile] = useState({
-    businessName: 'Your Business',
-    industry: 'Manufacturing & Chemical',
-    location: 'Industrial Zone, Phase-2',
-    projectSize: 'Medium Scale (5-20 Acres)',
-    stage: 'Pre-Establishment'
-  });
+const slaColor = (state) => {
+  if (state === 'red') return 'text-red-600 bg-red-50 border-red-200';
+  if (state === 'yellow') return 'text-amber-600 bg-amber-50 border-amber-200';
+  if (state === 'done') return 'text-emerald-600 bg-emerald-50 border-emerald-200';
+  return 'text-slate-600 bg-slate-50 border-slate-200';
+};
 
-  const [checklist, setChecklist] = useState([]);
-  const [selectedApproval, setSelectedApproval] = useState('');
+const statusBadge = (status) => {
+  if (status === 'APPROVED') return 'text-emerald-700 bg-emerald-50 border-emerald-200';
+  if (status === 'REJECTED') return 'text-red-700 bg-red-50 border-red-200';
+  if (status === 'QUERY_RAISED') return 'text-amber-700 bg-amber-50 border-amber-200';
+  return 'text-blue-700 bg-blue-50 border-blue-200';
+};
+
+export default function OfficerDashboard() {
   const [applications, setApplications] = useState([]);
-  const [submittingId, setSubmittingId] = useState(null);
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [busyId, setBusyId] = useState(null);
 
-  // Upload state
-  const [docsByApp, setDocsByApp] = useState({});
-  const [uploadingDoc, setUploadingDoc] = useState(null);
-  const [uploadError, setUploadError] = useState('');
-  const fileInputRef = useRef(null);
-  const pendingDocRef = useRef(null);
+  // Documents popup
+  const [docView, setDocView] = useState(null);
+  const [docLoading, setDocLoading] = useState(false);
+  const [docError, setDocError] = useState('');
+
+  const load = async () => {
+    try {
+      const [a, s] = await Promise.all([
+        api('/officer/applications'),
+        api('/officer/dashboard'),
+      ]);
+      setApplications(a.applications);
+      setStats(s);
+      setError('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const saved = localStorage.getItem('businessProfile');
-    if (saved) {
-      setProfile(JSON.parse(saved));
-    }
+    load();
+  }, []);
 
-    api('/approvals/discover', { method: 'POST' })
-      .then((data) => {
-        const generated = data.approvals.map((a) => ({
-          id: a.code,
-          name: a.name,
-          dept: a.department,
-          sla: `${a.sla_days} Days`,
-          why: a.why_needed,
-          documents: a.documents,
-        }));
-        setChecklist(generated);
-        setSelectedApproval(generated[0]?.name || '');
-      })
-      .catch((err) => {
-        console.error('Approval discovery failed:', err.message);
-        const fallback = getIndustryChecklist(
-          saved ? JSON.parse(saved).industry : 'Manufacturing & Chemical'
-        );
-        setChecklist(fallback);
-        setSelectedApproval(fallback[0]?.name || '');
+  const decide = async (id, action) => {
+    let remarks = '';
+    if (action === 'reject' || action === 'query') {
+      remarks = window.prompt(
+        action === 'reject' ? 'Reason for rejection:' : 'Query for the applicant:'
+      );
+      if (remarks === null) return;
+    }
+    setBusyId(id);
+    try {
+      await api(`/officer/applications/${id}/${action}`, {
+        method: 'POST',
+        body: { remarks },
       });
-  }, []);
-
-  const loadApplications = async () => {
-    try {
-      const data = await api('/applications/generate', { method: 'POST' });
-      setApplications(data.applications);
-      return data.applications;
-    } catch (err) {
-      console.error('Could not load applications:', err.message);
-      return [];
-    }
-  };
-
-  const loadDocuments = async (appId) => {
-    try {
-      const data = await api(`/applications/${appId}/documents`);
-      setDocsByApp((prev) => ({ ...prev, [appId]: data }));
-    } catch (err) {
-      console.error('Could not load documents:', err.message);
-    }
-  };
-
-  useEffect(() => {
-    loadApplications().then((apps) => apps.forEach((a) => loadDocuments(a.id)));
-  }, []);
-
-  const handleSubmitApplication = async (appId) => {
-    setSubmittingId(appId);
-    try {
-      await api(`/applications/${appId}/submit`, { method: 'POST' });
-      await loadApplications();
+      await load();
+      setDocView(null);
     } catch (err) {
       alert(err.message);
     } finally {
-      setSubmittingId(null);
+      setBusyId(null);
     }
   };
 
-  const statusStyle = (status) => {
-    if (status === 'APPROVED') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-    if (status === 'REJECTED') return 'bg-red-50 text-red-700 border-red-200';
-    if (status === 'QUERY_RAISED') return 'bg-amber-50 text-amber-700 border-amber-200';
-    if (status === 'DRAFT') return 'bg-slate-50 text-slate-600 border-slate-200';
-    return 'bg-blue-50 text-blue-700 border-blue-200';
-  };
-
-  const selectedApp = applications.find((a) => a.approval_name === selectedApproval);
-  const selectedDocs = selectedApp ? docsByApp[selectedApp.id] : null;
-
-  const chooseFile = (docName) => {
-    pendingDocRef.current = docName;
-    setUploadError('');
-    fileInputRef.current?.click();
-  };
-
-  const handleFileChosen = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    const docName = pendingDocRef.current;
-    if (!file || !docName || !selectedApp) return;
-
-    setUploadingDoc(docName);
-    setUploadError('');
+  const openDocuments = async (app) => {
+    setDocView({ app, required: [], documents: [] });
+    setDocLoading(true);
+    setDocError('');
     try {
-      const form = new FormData();
-      form.append('doc_name', docName);
-      form.append('file', file);
-
-      const token = localStorage.getItem('token');
-      const res = await fetch(`/api/applications/${selectedApp.id}/documents`, {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: form,
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) {
-        throw new Error(typeof data?.detail === 'string' ? data.detail : `Upload failed (status ${res.status})`);
-      }
-      await loadDocuments(selectedApp.id);
+      const data = await api(`/officer/applications/${app.id}/documents`);
+      setDocView({ app: data.application, required: data.required, documents: data.documents });
     } catch (err) {
-      setUploadError(err.message);
+      setDocError(err.message);
     } finally {
-      setUploadingDoc(null);
+      setDocLoading(false);
+    }
+  };
+
+  // File token ke saath mangate hain aur naye tab mein kholte hain
+  const openFile = async (docId) => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/officer/documents/${docId}/file`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(typeof data?.detail === 'string' ? data.detail : `Could not open file (status ${res.status})`);
+      }
+      const blob = await res.blob();
+      window.open(URL.createObjectURL(blob), '_blank');
+    } catch (err) {
+      alert(err.message);
     }
   };
 
@@ -144,45 +108,29 @@ export default function Dashboard() {
     window.location.reload();
   };
 
-  const initials = (localStorage.getItem('userName') || profile.businessName || 'U')
-    .split(' ')
-    .map((w) => w[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
+  const isOpen = (s) => s === 'SUBMITTED' || s === 'UNDER_REVIEW' || s === 'QUERY_RAISED';
 
   return (
-    <div className="min-h-screen bg-[#f4faf6] font-sans">
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="application/pdf,image/jpeg,image/png,image/webp"
-        className="hidden"
-        onChange={handleFileChosen}
-      />
-
-      <nav className="bg-white border-b border-emerald-900/10 sticky top-0 z-50">
+    <div className="min-h-screen bg-slate-50 font-sans">
+      <nav className="bg-slate-900 border-b border-slate-800 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16 items-center">
             <div className="flex items-center gap-3">
-              <div className="bg-emerald-800 p-2 rounded-lg text-white">
-                <Building2 className="size-5" />
+              <div className="bg-slate-800 p-2 rounded-lg text-white">
+                <Shield className="size-5 text-blue-400" />
               </div>
               <div>
-                <h1 className="text-lg font-bold text-emerald-950 leading-tight">Avyra &middot; Smart Portal</h1>
-                <p className="text-xs text-emerald-900/60 font-medium">SIH26130 &middot; {profile.businessName}</p>
+                <h1 className="text-lg font-bold text-white leading-tight">Avyra &middot; Govt. Officer Portal</h1>
+                <p className="text-xs text-slate-400 font-medium">{stats?.department || 'Department of Industries & Commerce'}</p>
               </div>
             </div>
             <div className="flex items-center gap-4">
-              <button className="text-emerald-900/60 hover:text-emerald-950 transition"><Search className="size-5" /></button>
-              <button className="relative text-emerald-900/60 hover:text-emerald-950 transition">
+              <button className="text-slate-400 hover:text-white transition"><Search className="size-5" /></button>
+              <button className="relative text-slate-400 hover:text-white transition">
                 <Bell className="size-5" />
-                <span className="absolute top-0 right-0 size-2 bg-red-500 rounded-full border border-white"></span>
+                <span className="absolute top-0 right-0 size-2 bg-red-500 rounded-full border border-slate-900"></span>
               </button>
-              <div className="h-9 w-9 rounded-full bg-emerald-100 border border-emerald-200 flex items-center justify-center text-emerald-800 font-bold ml-2">
-                {initials}
-              </div>
-              <button onClick={handleLogout} className="flex items-center gap-1 text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg transition">
+              <button onClick={handleLogout} className="flex items-center gap-1.5 ml-4 text-xs font-bold text-red-400 hover:text-red-300 bg-red-500/10 px-3 py-1.5 rounded-lg border border-red-500/20 transition">
                 <LogOut className="size-3.5" /> Logout
               </button>
             </div>
@@ -191,201 +139,181 @@ export default function Dashboard() {
       </nav>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex items-center gap-3 mb-8 border-b border-emerald-900/10 pb-4">
-          <button
-            onClick={() => setActiveTab('dashboard')}
-            className={`px-5 py-2.5 rounded-xl text-sm font-bold transition shadow-sm ${activeTab === 'dashboard' ? 'bg-emerald-800 text-white shadow-emerald-900/10' : 'bg-white text-emerald-900/70 border border-emerald-900/10 hover:bg-emerald-50'}`}
-          >
-            AI Approval Checklist & OCR
-          </button>
-          <button
-            onClick={() => setActiveTab('tracking')}
-            className={`px-5 py-2.5 rounded-xl text-sm font-bold transition flex items-center gap-2 shadow-sm ${activeTab === 'tracking' ? 'bg-emerald-800 text-white shadow-emerald-900/10' : 'bg-white text-emerald-900/70 border border-emerald-900/10 hover:bg-emerald-50'}`}
-          >
-            <Clock className="size-4" /> Live Tracking & Bottlenecks Monitor
-          </button>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm border-l-4 border-l-blue-500">
+            <p className="text-sm font-semibold text-slate-500">New Applications</p>
+            <h3 className="text-3xl font-extrabold text-slate-900 mt-2">{stats?.new_applications ?? 0}</h3>
+          </div>
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm border-l-4 border-l-amber-500">
+            <p className="text-sm font-semibold text-slate-500">SLA Nearing Expiry</p>
+            <h3 className="text-3xl font-extrabold text-slate-900 mt-2">{stats?.sla_nearing ?? 0}</h3>
+          </div>
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm border-l-4 border-l-red-500">
+            <p className="text-sm font-semibold text-slate-500">SLA Breached</p>
+            <h3 className="text-3xl font-extrabold text-slate-900 mt-2">{stats?.sla_breached ?? 0}</h3>
+          </div>
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm border-l-4 border-l-emerald-500">
+            <p className="text-sm font-semibold text-slate-500">Approved</p>
+            <h3 className="text-3xl font-extrabold text-slate-900 mt-2">{stats?.approved ?? 0}</h3>
+          </div>
         </div>
 
-        {activeTab === 'tracking' ? (
-          <TrackingModule />
-        ) : (
-          <>
-            <div className="bg-emerald-900 text-white rounded-2xl p-6 md:p-8 mb-8 shadow-md flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="bg-emerald-800 text-emerald-200 text-xs font-semibold px-2.5 py-1 rounded-md border border-emerald-700 flex items-center gap-1.5">
-                    <Cpu className="size-3.5 text-emerald-300" /> AI Approval Discovery Engine Active
-                  </span>
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-6 py-5 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+            <h3 className="text-lg font-semibold text-slate-900">Inter-Departmental Application Queue (SLA Time-Bomb Node)</h3>
+          </div>
+
+          {loading && <p className="p-6 text-sm text-slate-500">Loading applications...</p>}
+          {error && <p className="p-6 text-sm text-red-600">{error}</p>}
+          {!loading && !error && applications.length === 0 && (
+            <p className="p-6 text-sm text-slate-500">
+              No submitted applications yet. Submit one from an Entrepreneur account.
+            </p>
+          )}
+
+          <div className="divide-y divide-slate-100">
+            {applications.map((app) => (
+              <div key={app.id} className="p-6 flex flex-col lg:flex-row lg:items-center justify-between hover:bg-slate-50 transition gap-4">
+                <div className="flex items-start gap-4">
+                  <div className="bg-blue-50 p-3 rounded-xl border border-blue-100"><FileText className="size-6 text-blue-600" /></div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-base">
+                      {app.business_name} <span className="text-xs font-normal text-slate-500 ml-2">ID: {app.ref}</span>
+                    </h4>
+                    <p className="text-sm text-slate-600 mt-1">{app.approval_name}</p>
+                    {app.remarks && <p className="text-xs italic text-slate-500 mt-1">Remarks: {app.remarks}</p>}
+                    <div className="flex flex-wrap items-center gap-3 mt-2">
+                      <span className={`text-xs font-bold px-2 py-1 rounded border ${statusBadge(app.status)}`}>
+                        {app.status.replace('_', ' ')}
+                      </span>
+                      <span className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded border ${slaColor(app.sla_state)}`}>
+                        {app.sla_state === 'done' ? <Check className="size-3" /> : <Clock className="size-3" />} SLA: {app.sla_label}
+                      </span>
+                    </div>
+                  </div>
                 </div>
-                <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight">Welcome, {profile.businessName}</h2>
-                <p className="text-emerald-200/90 text-sm mt-1">
-                  Sector: <strong className="text-white">{profile.industry}</strong> &bull; Location: <strong className="text-white">{profile.location}</strong>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => openDocuments(app)}
+                    className="px-3 py-2 text-sm font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition flex items-center gap-1.5"
+                  >
+                    <Eye className="size-4" /> View Documents
+                  </button>
+                  {isOpen(app.status) ? (
+                    <>
+                      <button
+                        onClick={() => decide(app.id, 'query')}
+                        disabled={busyId === app.id}
+                        className="px-3 py-2 text-sm font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition flex items-center gap-1.5 disabled:opacity-60"
+                      >
+                        <HelpCircle className="size-4" /> Raise Query
+                      </button>
+                      <button
+                        onClick={() => decide(app.id, 'reject')}
+                        disabled={busyId === app.id}
+                        className="px-3 py-2 text-sm font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition flex items-center gap-1.5 disabled:opacity-60"
+                      >
+                        <XCircle className="size-4" /> Reject
+                      </button>
+                      <button
+                        onClick={() => decide(app.id, 'approve')}
+                        disabled={busyId === app.id}
+                        className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition shadow-sm flex items-center gap-2 disabled:opacity-60"
+                      >
+                        <CheckCircle className="size-4" /> Approve
+                      </button>
+                    </>
+                  ) : (
+                    <span className={`flex items-center gap-1 text-sm font-bold px-4 py-2 rounded-lg border ${statusBadge(app.status)}`}>
+                      {app.status === 'APPROVED' ? <CheckCircle className="size-4" /> : <XCircle className="size-4" />}
+                      {app.status === 'APPROVED' ? 'Approved' : 'Rejected'}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </main>
+
+      {/* Documents popup */}
+      {docView && (
+        <div className="fixed inset-0 z-[90] bg-slate-900/60 flex items-center justify-center p-4" onClick={() => setDocView(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-slate-200 flex items-start justify-between gap-4 sticky top-0 bg-white">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Submitted Documents</h3>
+                <p className="text-sm text-slate-600">
+                  {docView.app.business_name} &bull; {docView.app.approval_name} &bull; {docView.app.ref}
                 </p>
               </div>
-              <div className="bg-emerald-800/80 border border-emerald-700/60 p-4 rounded-xl text-right shrink-0">
-                <p className="text-xs text-emerald-200 uppercase tracking-wider font-semibold">Total Mandatory Approvals</p>
-                <p className="text-2xl font-black text-white">{checklist.length} Clearances Required</p>
-              </div>
+              <button onClick={() => setDocView(null)} className="text-slate-500 hover:text-slate-900">
+                <X className="size-5" />
+              </button>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              <div className="lg:col-span-2 space-y-6">
-                {/* Upload card */}
-                <div className="bg-white rounded-2xl border border-emerald-900/10 shadow-sm p-6">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-2">
-                    <h3 className="text-lg font-semibold text-emerald-950 flex items-center gap-2">
-                      <Activity className="size-5 text-emerald-600" />
-                      Document Upload & AI Validation
-                    </h3>
-                    <div className="text-xs font-medium bg-emerald-50 text-emerald-800 px-3 py-1 rounded-lg border border-emerald-200">
-                      Target: <strong className="text-emerald-950">{selectedApproval}</strong>
-                    </div>
-                  </div>
+            <div className="p-6 space-y-3">
+              {docLoading && <p className="text-sm text-slate-500">Loading documents...</p>}
+              {docError && <p className="text-sm text-red-600">{docError}</p>}
 
-                  {!selectedApp && (
-                    <p className="text-sm text-emerald-900/60">Select an approval from the checklist below.</p>
-                  )}
+              {!docLoading && !docError && (
+                <>
+                  <p className={`text-xs font-bold px-3 py-2 rounded-lg border ${
+                    docView.documents.length >= docView.required.length
+                      ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                      : 'text-amber-700 bg-amber-50 border-amber-200'
+                  }`}>
+                    Completeness: {docView.documents.length} of {docView.required.length} required documents received
+                  </p>
 
-                  {selectedApp && !selectedDocs && (
-                    <p className="text-sm text-emerald-900/60">Loading documents...</p>
-                  )}
-
-                  {selectedApp && selectedDocs && (
-                    <div className="space-y-2">
-                      {selectedDocs.required.map((docName) => {
-                        const uploaded = selectedDocs.documents.find((d) => d.doc_name === docName);
-                        const busy = uploadingDoc === docName;
-                        return (
-                          <div
-                            key={docName}
-                            className={`flex items-center justify-between gap-3 rounded-xl border p-3 ${uploaded ? 'border-emerald-300 bg-emerald-50/60' : 'border-slate-200 bg-slate-50'}`}
-                          >
-                            <div className="flex items-center gap-3 min-w-0">
-                              {uploaded ? (
-                                <ShieldCheck className="size-5 text-emerald-600 shrink-0" />
-                              ) : (
-                                <FileText className="size-5 text-slate-400 shrink-0" />
-                              )}
-                              <div className="min-w-0">
-                                <p className="text-sm font-semibold text-emerald-950">{docName}</p>
-                                <p className="text-xs text-slate-500 truncate">
-                                  {uploaded ? `Uploaded: ${uploaded.filename}` : 'Not uploaded yet'}
-                                </p>
-                              </div>
-                            </div>
-                            <button
-                              onClick={() => chooseFile(docName)}
-                              disabled={busy || selectedApp.status !== 'DRAFT'}
-                              className="shrink-0 flex items-center gap-1.5 bg-emerald-800 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-emerald-900 transition disabled:opacity-50"
-                            >
-                              <UploadCloud className="size-3.5" />
-                              {busy ? 'Uploading...' : uploaded ? 'Replace' : 'Upload'}
-                            </button>
-                          </div>
-                        );
-                      })}
-                      <p className="text-xs text-emerald-900/60 pt-1">
-                        {selectedDocs.documents.length} of {selectedDocs.required.length} documents uploaded. PDF, JPG, PNG or WEBP, max 5 MB.
-                      </p>
-                      {selectedApp.status !== 'DRAFT' && (
-                        <p className="text-xs text-amber-700">This application is already submitted, so uploads are locked.</p>
-                      )}
-                    </div>
-                  )}
-
-                  {uploadError && (
-                    <p className="mt-3 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                      {uploadError}
-                    </p>
-                  )}
-                </div>
-
-                {/* Checklist */}
-                <div className="bg-white rounded-2xl border border-emerald-900/10 shadow-sm overflow-hidden">
-                  <div className="px-6 py-5 border-b border-emerald-900/10 flex justify-between items-center bg-emerald-50/30">
-                    <h3 className="text-lg font-semibold text-emerald-950">Personalized Checklist & Live Tracker</h3>
-                    <span className="text-xs font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-full border border-emerald-200">
-                      {profile.industry}
-                    </span>
-                  </div>
-                  <div className="divide-y divide-emerald-900/5">
-                    {checklist.map((item, idx) => {
-                      const app = applications.find((a) => a.approval_name === item.name);
-                      return (
-                        <div
-                          key={item.id}
-                          onClick={() => setSelectedApproval(item.name)}
-                          className={`px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between transition cursor-pointer gap-3 ${selectedApproval === item.name ? 'bg-emerald-50/80 border-l-4 border-l-emerald-600' : 'hover:bg-emerald-50/40'}`}
-                        >
-                          <div className="flex items-center gap-4">
-                            <div className="bg-emerald-100 p-2.5 rounded-xl text-emerald-800 font-bold text-sm">
-                              {String(idx + 1).padStart(2, '0')}
-                            </div>
-                            <div>
-                              <p className="text-sm font-bold text-emerald-950">{item.name}</p>
-                              <p className="text-xs text-emerald-900/60">{item.dept} &bull; SLA: <span className="font-semibold text-emerald-800">{item.sla}</span></p>
-                            </div>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            {app && (
-                              <>
-                                <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${statusStyle(app.status)}`}>
-                                  {app.ref} &bull; {app.status.replace('_', ' ')}
-                                </span>
-                                {app.status === 'DRAFT' && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleSubmitApplication(app.id);
-                                    }}
-                                    disabled={submittingId === app.id}
-                                    className="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-xs font-bold transition disabled:opacity-60"
-                                  >
-                                    {submittingId === app.id ? 'Submitting...' : 'Submit'}
-                                  </button>
-                                )}
-                              </>
-                            )}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setActiveTab('tracking');
-                              }}
-                              className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-xs"
-                            >
-                              <Clock className="size-3.5 text-emerald-600" /> View in Tracker
-                            </button>
+                  {docView.required.map((name) => {
+                    const d = docView.documents.find((x) => x.doc_name === name);
+                    return (
+                      <div
+                        key={name}
+                        className={`flex items-center justify-between gap-3 rounded-xl border p-3 ${d ? 'border-emerald-200 bg-emerald-50/50' : 'border-red-200 bg-red-50'}`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          {d ? <ShieldCheck className="size-5 text-emerald-600 shrink-0" /> : <XCircle className="size-5 text-red-500 shrink-0" />}
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-slate-900">{name}</p>
+                            <p className="text-xs text-slate-500 truncate">
+                              {d ? d.filename : 'Missing: not uploaded by applicant'}
+                            </p>
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
+                        {d && (
+                          <button
+                            onClick={() => openFile(d.id)}
+                            className="shrink-0 px-3 py-1.5 text-xs font-bold text-white bg-slate-800 rounded-lg hover:bg-slate-900 transition"
+                          >
+                            Open file
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
 
-              <div className="space-y-6">
-                <div className="bg-white rounded-2xl border border-emerald-900/10 shadow-sm p-6">
-                  <h3 className="text-base font-bold text-emerald-950 mb-3">AI Workflow Summary</h3>
-                  <ul className="space-y-3 text-xs text-emerald-900/80 leading-relaxed">
-                    <li className="flex items-start gap-2">
-                      <CheckCircle2 className="size-4 text-emerald-600 shrink-0 mt-0.5" />
-                      <span><strong>Profile Locked:</strong> Business data securely saved.</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <CheckCircle2 className="size-4 text-emerald-600 shrink-0 mt-0.5" />
-                      <span><strong>Dynamic Discovery:</strong> Filtered {checklist.length} mandatory clearances for {profile.industry}.</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <CheckCircle2 className="size-4 text-emerald-600 shrink-0 mt-0.5" />
-                      <span><strong>Bottleneck Tracking:</strong> Switch to the tracking tab to monitor delays.</span>
-                    </li>
-                  </ul>
-                </div>
-              </div>
+                  {isOpen(docView.app.status) && (
+                    <div className="flex flex-wrap justify-end gap-2 pt-3 border-t border-slate-200">
+                      <button onClick={() => decide(docView.app.id, 'query')} className="px-3 py-2 text-sm font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition">
+                        Raise Query
+                      </button>
+                      <button onClick={() => decide(docView.app.id, 'reject')} className="px-3 py-2 text-sm font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition">
+                        Reject
+                      </button>
+                      <button onClick={() => decide(docView.app.id, 'approve')} className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition">
+                        Approve
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
-          </>
-        )}
-      </main>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

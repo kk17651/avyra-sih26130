@@ -97,3 +97,58 @@ def reject(app_id: int, body: DecisionIn, officer: models.User = Depends(require
 @router.post("/applications/{app_id}/query")
 def raise_query(app_id: int, body: DecisionIn, officer: models.User = Depends(require_officer), db: Session = Depends(get_db)):
     return decide(app_id, "QUERY_RAISED", body.remarks or "Please provide additional information", officer, db)
+
+import os
+
+from fastapi.responses import FileResponse
+
+
+def check_department(officer: models.User, app: models.Application):
+    if officer.department_id and app.approval.department_id != officer.department_id:
+        raise HTTPException(status_code=403, detail="This application belongs to another department")
+
+
+@router.get("/applications/{app_id}/documents")
+def officer_documents(
+    app_id: int, officer: models.User = Depends(require_officer), db: Session = Depends(get_db)
+):
+    app = db.get(models.Application, app_id)
+    if app is None or app.status == "DRAFT":
+        raise HTTPException(status_code=404, detail="Application not found")
+    check_department(officer, app)
+
+    required = [d.doc_name for d in app.approval.documents]
+    docs = db.query(models.Document).filter_by(application_id=app.id).all()
+    return {
+        "application": officer_app_dict(app),
+        "required": required,
+        "documents": [
+            {
+                "id": d.id,
+                "doc_name": d.doc_name,
+                "filename": d.original_filename,
+                "content_type": d.content_type,
+                "verify_status": d.verify_status,
+                "verify_message": d.verify_message,
+                "uploaded_at": d.uploaded_at.isoformat(),
+            }
+            for d in docs
+        ],
+    }
+
+
+@router.get("/documents/{doc_id}/file")
+def officer_document_file(
+    doc_id: int, officer: models.User = Depends(require_officer), db: Session = Depends(get_db)
+):
+    doc = db.get(models.Document, doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    check_department(officer, doc.application)
+    if not os.path.exists(doc.stored_path):
+        raise HTTPException(status_code=404, detail="File is missing on the server")
+    return FileResponse(
+        doc.stored_path,
+        media_type=doc.content_type or "application/octet-stream",
+        filename=doc.original_filename,
+    )

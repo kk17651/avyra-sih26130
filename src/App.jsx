@@ -4,7 +4,7 @@ import Onboarding from './Onboarding';
 import Roadmap from './Roadmap';
 import Dashboard from './Dashboard';
 import OfficerDashboard from './OfficerDashboard';
-import Chatbot from './chatbot';
+import Chatbot from './Chatbot';
 
 export default function App() {
   const [, setRefreshKey] = useState(0);

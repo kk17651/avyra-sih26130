@@ -34,11 +34,25 @@ def get_my_business(db: Session, user: models.User) -> models.Business:
     return business
 
 
+def readiness(db: Session, app: models.Application) -> dict:
+    required = [d.doc_name for d in app.approval.documents]
+    uploaded = {
+        d.doc_name
+        for d in db.query(models.Document).filter_by(application_id=app.id).all()
+    }
+    missing = [d for d in required if d not in uploaded]
+    return {"ready": len(missing) == 0, "missing": missing}
+
+
+def with_readiness(db: Session, apps: list) -> list:
+    return [{**app_to_dict(a), "readiness": readiness(db, a)} for a in apps]
+
+
 @router.post("/generate")
 def generate_applications(
     user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
-    """Rules ke hisaab se har approval ka draft application banata hai (duplicate nahi)."""
+    """Rules decide: har approval ka draft application banata hai (duplicate nahi)."""
     if user.role != "entrepreneur":
         raise HTTPException(status_code=403, detail="Only entrepreneurs can do this")
     business = get_my_business(db, user)
@@ -52,8 +66,13 @@ def generate_applications(
             db.add(models.Application(business_id=business.id, approval_id=approval.id))
     db.commit()
 
-    apps = db.query(models.Application).filter_by(business_id=business.id).order_by(models.Application.id).all()
-    return {"applications": [app_to_dict(a) for a in apps]}
+    apps = (
+        db.query(models.Application)
+        .filter_by(business_id=business.id)
+        .order_by(models.Application.id)
+        .all()
+    )
+    return {"applications": with_readiness(db, apps)}
 
 
 @router.get("")
@@ -61,8 +80,13 @@ def my_applications(
     user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
     business = get_my_business(db, user)
-    apps = db.query(models.Application).filter_by(business_id=business.id).order_by(models.Application.id).all()
-    return {"applications": [app_to_dict(a) for a in apps]}
+    apps = (
+        db.query(models.Application)
+        .filter_by(business_id=business.id)
+        .order_by(models.Application.id)
+        .all()
+    )
+    return {"applications": with_readiness(db, apps)}
 
 
 @router.post("/{app_id}/submit")
@@ -75,6 +99,13 @@ def submit_application(
         raise HTTPException(status_code=404, detail="Application not found")
     if app.status != "DRAFT":
         raise HTTPException(status_code=400, detail="Only draft applications can be submitted")
+
+    check = readiness(db, app)
+    if not check["ready"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing documents: " + ", ".join(check["missing"]),
+        )
 
     app.status = "SUBMITTED"
     app.submitted_at = datetime.utcnow()
